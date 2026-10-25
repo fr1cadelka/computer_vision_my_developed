@@ -1,0 +1,44 @@
+# ================================
+# ROS 2 артефакты сборки
+# ================================
+build/
+install/
+log/
+devel/
+
+# ================================
+# Qt Creator / IDE
+# ================================
+.qtc_clangd/
+*.workspace
+*.workspace.user
+*.workspace.user.*
+.vscode/
+.idea/
+*.autosave
+*.user
+
+# ================================
+# CMake
+# ================================
+CMakeLists.txt.user
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# ================================
+# Python
+# ================================
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ================================
+# Системный мусор
+# ================================
+.DS_Store
+Thumbs.db
+*.swp
+*~
