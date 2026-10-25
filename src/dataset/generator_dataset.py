@@ -4,7 +4,7 @@ import os
 import random
 
 # // create folder with data set
-digit= "5"
+digit= "4"
 base_dir="dataset"
 digit_dir=os.path.join(base_dir,digit)
 
@@ -25,7 +25,7 @@ fonts = [
 img_size= 32
 samples_per_digit=1000
 
-print("Генерация дата сета for 5")
+print("Генерация дата сета for 4")
 
 for i in range(samples_per_digit):
 

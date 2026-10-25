@@ -35,57 +35,59 @@ private:
         cv::cvtColor(frame, hsv, cv::COLOR_BGR2HSV);
 
         //Два порога - нижний и верхний
-        cv::Scalar lower = cv::Scalar(20, 100, 100);
+        cv::Scalar lower = cv::Scalar(20, 120, 100);
         cv::Scalar upper = cv::Scalar(35, 255, 255);
 
         //Фильтруем
          cv::inRange(hsv,lower,upper,yelow_mask);
 
-        cv::Mat  kernel_filter= cv::getStructuringElement(cv::MORPH_RECT,cv::Size(5,5));
+        cv::Mat  kernel_filter= cv::getStructuringElement(cv::MORPH_RECT,cv::Size(7,7));
 
         cv::morphologyEx(yelow_mask,yelow_mask,cv::MORPH_OPEN,kernel_filter);
 
         cv::morphologyEx(yelow_mask,yelow_mask,cv::MORPH_CLOSE,kernel_filter);
 
+        // cv::imshow("mask Window", yelow_mask);
+        // cv::waitKey(1);
 
         std::vector<std::vector<cv::Point>> countours;
 
         cv::findContours(yelow_mask,countours,cv::RETR_EXTERNAL,cv::CHAIN_APPROX_SIMPLE);
 
 
-        double max_area=0;
+        // cv::imshow("debug window",yelow_mask);
 
-        int max_countours_index=-1;
+        // cv::waitKey(1);
 
-        for(size_t i=0; i<countours.size();i++){
 
-            double area = cv::contourArea(countours[i]);
 
-            if(area>max_area){
+        // 1. Ищем самый большой квадрат
+        // 4. Перебор контуров
+        // 4. Перебор контуров
+        for (const auto& contour : countours) {
+            double area = cv::contourArea(contour);
 
-                max_area=area;
+            // Проверяем, что площадь в нужном диапазоне (от 5000 до 90000)
+            if (area >= 50000 && area <= 90000) {
 
-                max_countours_index=i;
+                // Получаем прямоугольник для текущего объекта
+                cv::Rect rect = cv::boundingRect(contour);
+
+                // Рисуем зеленую рамку для КАЖДОГО подходящего объекта
+                cv::rectangle(frame, rect, cv::Scalar(255, 0, 255),  3);
+
+                // Выводим в консоль, что мы его выделили
+                // RCLCPP_INFO(this->get_logger(), "Area: %.1f -> ВЫДЕЛЕНО", area);
             }
-
-
         }
 
-        if(max_countours_index!=-1 && max_area>1000){
+        // 5. Показываем результат в окне OpenCV
 
 
-            cv::Rect rect=cv::boundingRect(countours[max_countours_index]);
-
-            cv::rectangle(frame,rect,cv::Scalar(255,0,255),3);
-
-        }
-
-
-        sensor_msgs::msg::Image::SharedPtr out_msg=
-            cv_bridge::CvImage(msg->header,"bgr8",frame).toImageMsg();
-
+        // 6. Отправляем обработанную картинку в ROS
+        sensor_msgs::msg::Image::SharedPtr out_msg =
+            cv_bridge::CvImage(msg->header, "bgr8", frame).toImageMsg();
         publisher->publish(*out_msg);
-
 
 
         // //1. Преобразование в cv::Mat

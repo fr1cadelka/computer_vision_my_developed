@@ -18,7 +18,7 @@ def generate_launch_description():
             parameters=[{
                 'source': 'video',
                 'path': '/home/dmitry/Downloads/16198281792142 (1).mp4',
-                'fps': 5
+                'fps': 10
             }]
         ),
         # Узел обработчик изображения
@@ -37,11 +37,11 @@ def generate_launch_description():
         #     executable='image_processing_ml_knn_node',
         #     name='image_processing_ml_knn_node'
         # ),
-        Node(
-            package='image_processing',
-            executable='image_processing_ml_svm_node',
-            name='image_processing_ml_svm_node'
-        ),
+        # Node(
+        #     package='image_processing',
+        #     executable='image_processing_ml_svm_node',
+        #     name='image_processing_ml_svm_node'
+        # ),
         #rviz
         Node(
             package='rviz2',
