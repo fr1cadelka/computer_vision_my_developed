@@ -17,7 +17,7 @@ public:
         //Инициализация публикатора
         publisher =
             this->create_publisher<sensor_msgs::msg::Image>("processed_image",
-                                                            QoS);
+                                                            10);
 
     }
 private:
@@ -25,93 +25,157 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
         publisher;
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscriber;
-
     void image_callback(const sensor_msgs::msg::Image::SharedPtr msg) {
 
+        // 1. toCvShare быстрее, чем toCvCopy, но мы делаем clone(), чтобы можно было рисовать
+        cv::Mat frame = cv_bridge::toCvShare(msg, "bgr8")->image.clone();
 
-        cv::Mat result, hsv,frame,yelow_mask;
+        // --- ОПТИМИЗАЦИЯ 1: Уменьшаем кадр для обработки ---
+        cv::Mat small_frame;
+        // Сжимаем до ширины 640 пикселей (высота подстроится автоматически)
+        double scale = 640.0 / frame.cols;
+        cv::resize(frame, small_frame, cv::Size(), scale, scale);
 
-        frame=cv_bridge::toCvCopy(msg,"bgr8")->image;
-        cv::cvtColor(frame, hsv, cv::COLOR_BGR2HSV);
+        // 2. Работаем с маленьким кадром
+        cv::Mat hsv, yellow_mask;
+        cv::cvtColor(small_frame, hsv, cv::COLOR_BGR2HSV);
 
-        //Два порога - нижний и верхний
-        cv::Scalar lower = cv::Scalar(20, 120, 100);
-        cv::Scalar upper = cv::Scalar(35, 255, 255);
+        cv::Scalar lower(20, 120, 100);
+        cv::Scalar upper(35, 255, 255);
+        cv::inRange(hsv, lower, upper, yellow_mask);
 
-        //Фильтруем
-         cv::inRange(hsv,lower,upper,yelow_mask);
-
-        cv::Mat  kernel_filter= cv::getStructuringElement(cv::MORPH_RECT,cv::Size(7,7));
-
-        cv::morphologyEx(yelow_mask,yelow_mask,cv::MORPH_OPEN,kernel_filter);
-
-        cv::morphologyEx(yelow_mask,yelow_mask,cv::MORPH_CLOSE,kernel_filter);
-
-        // cv::imshow("mask Window", yelow_mask);
-        // cv::waitKey(1);
+        // --- ОПТИМИЗАЦИЯ 2: Убираем OPEN, оставляем только CLOSE с ядром 5x5 ---
+        // Это в 3 раза быстрее и всё равно залечивает дырки от пальцев
+        // cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+        // cv::morphologyEx(yellow_mask, yellow_mask, cv::MORPH_CLOSE, kernel);
 
         std::vector<std::vector<cv::Point>> countours;
+        cv::findContours(yellow_mask, countours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-        cv::findContours(yelow_mask,countours,cv::RETR_EXTERNAL,cv::CHAIN_APPROX_SIMPLE);
-
-
-        // cv::imshow("debug window",yelow_mask);
-
-        // cv::waitKey(1);
-
-
-
-        // 1. Ищем самый большой квадрат
-        // 4. Перебор контуров
-        // 4. Перебор контуров
         for (const auto& contour : countours) {
             double area = cv::contourArea(contour);
 
-            // Проверяем, что площадь в нужном диапазоне (от 5000 до 90000)
-            if (area >= 50000 && area <= 90000) {
+            // ВНИМАНИЕ: так как мы сжали картинку, площадь тоже стала меньше!
+            // Если раньше было 50000-90000, то теперь делим на 4 (примерно).
+            // Поэтому ставим порог от 10000 до 30000. Подкрути под себя.
+            if (area >= 10000 && area <= 30000) {
 
-                // Получаем прямоугольник для текущего объекта
-                cv::Rect rect = cv::boundingRect(contour);
+                cv::Rect rect_small = cv::boundingRect(contour);
 
-                // Рисуем зеленую рамку для КАЖДОГО подходящего объекта
-                cv::rectangle(frame, rect, cv::Scalar(255, 0, 255),  3);
+                // --- ОПТИМИЗАЦИЯ 3: Пересчитываем координаты обратно на большой кадр ---
+                cv::Rect rect_big;
+                rect_big.x = rect_small.x / scale;
+                rect_big.y = rect_small.y / scale;
+                rect_big.width = rect_small.width / scale;
+                rect_big.height = rect_small.height / scale;
 
-                // Выводим в консоль, что мы его выделили
-                // RCLCPP_INFO(this->get_logger(), "Area: %.1f -> ВЫДЕЛЕНО", area);
+                // Рисуем рамку на большом (оригинальном) кадре
+                cv::rectangle(frame, rect_big, cv::Scalar(255, 0, 255), 3);
+                RCLCPP_INFO(this->get_logger(), "Area: %.1f -> ВЫДЕЛЕНО", area);
             }
         }
 
-        // 5. Показываем результат в окне OpenCV
-
-
-        // 6. Отправляем обработанную картинку в ROS
+        // Отправляем в ROS
         sensor_msgs::msg::Image::SharedPtr out_msg =
             cv_bridge::CvImage(msg->header, "bgr8", frame).toImageMsg();
         publisher->publish(*out_msg);
-
-
-        // //1. Преобразование в cv::Mat
-        // cv::Mat input_frame =
-        //     cv_bridge::toCvCopy(msg, "bgr8")->image;
-
-        // //2. Обработка изображения
-        // cv::Mat output_frame = process_image_contours(input_frame);
-
-        // //3. Отправка изображения в топик
-        // //Определяем тип кодировки
-        // std::string encoding;
-        // if(output_frame.channels() == 1) {
-        // }
-        // else {
-        //     encoding = "bgr8";
-        // }
-        // //Формируем сообщение
-        // sensor_msgs::msg::Image::SharedPtr out_msg =
-        //     cv_bridge::CvImage(msg->header,encoding,output_frame).toImageMsg();
-        // //Публикуем
-        // publisher->publish(*out_msg);
-
     }
+
+    // void image_callback(const sensor_msgs::msg::Image::SharedPtr msg) {
+
+
+    //     cv::Mat result, hsv,frame,yelow_mask, small_frame;
+
+    //     frame=cv_bridge::toCvCopy(msg,"bgr8")->image.clone();
+
+    //     double scale=640/frame.cols;
+
+    //     cv::resize(frame,small_frame,cv::Size(),scale,scale);
+
+    //     cv::cvtColor(small_frame, hsv, cv::COLOR_BGR2HSV);
+
+    //     //Два порога - нижний и верхний
+    //     cv::Scalar lower = cv::Scalar(20, 120, 100);
+    //     cv::Scalar upper = cv::Scalar(35, 255, 255);
+
+    //     //Фильтруем
+    //      cv::inRange(hsv,lower,upper,yelow_mask);
+
+    //     // cv::Mat  kernel_filter= cv::getStructuringElement(cv::MORPH_RECT,cv::Size(5,5));
+
+    //     // cv::morphologyEx(yelow_mask,yelow_mask,cv::MORPH_OPEN,kernel_filter);
+
+    //     // cv::morphologyEx(yelow_mask,yelow_mask,cv::MORPH_CLOSE,kernel_filter);
+
+    //     // cv::imshow("mask Window", yelow_mask);
+    //     // cv::waitKey(1);
+
+    //     std::vector<std::vector<cv::Point>> countours;
+
+    //     cv::findContours(yelow_mask,countours,cv::RETR_EXTERNAL,cv::CHAIN_APPROX_SIMPLE);
+
+
+    //     // cv::imshow("debug window",yelow_mask);
+
+    //     // cv::waitKey(1);
+
+
+
+
+    //     for (const auto& contour : countours) {
+    //         double area = cv::contourArea(contour);
+
+    //         // Проверяем, что площадь в нужном диапазоне (от 5000 до 90000)
+    //         if (area >=2000 && area <= 90000) {
+
+    //             // Получаем прямоугольник для текущего объекта
+    //             cv::Rect rect_small = cv::boundingRect(contour);
+
+    //             cv::Rect rect_big;
+    //             rect_big.x = rect_small.x / scale;
+    //             rect_big.y = rect_small.y / scale;
+    //             rect_big.width = rect_small.width / scale;
+    //             rect_big.height = rect_small.height / scale;
+
+    //             // Рисуем зеленую рамку для КАЖДОГО подходящего объекта
+    //             cv::rectangle(frame, rect_big, cv::Scalar(255, 0, 255),  3);
+
+    //             // Выводим в консоль, что мы его выделили
+    //              RCLCPP_INFO(this->get_logger(), "Area: %.1f -> ВЫДЕЛЕНО", area);
+    //         }
+    //     }
+
+    //     // 5. Показываем результат в окне OpenCV
+
+
+    //     // 6. Отправляем обработанную картинку в ROS
+    //     sensor_msgs::msg::Image::SharedPtr out_msg =
+    //         cv_bridge::CvImage(msg->header, "bgr8", frame).toImageMsg();
+    //     publisher->publish(*out_msg);
+
+
+    //     // //1. Преобразование в cv::Mat
+    //     // cv::Mat input_frame =
+    //     //     cv_bridge::toCvCopy(msg, "bgr8")->image;
+
+    //     // //2. Обработка изображения
+    //     // cv::Mat output_frame = process_image_contours(input_frame);
+
+    //     // //3. Отправка изображения в топик
+    //     // //Определяем тип кодировки
+    //     // std::string encoding;
+    //     // if(output_frame.channels() == 1) {
+    //     // }
+    //     // else {
+    //     //     encoding = "bgr8";
+    //     // }
+    //     // //Формируем сообщение
+    //     // sensor_msgs::msg::Image::SharedPtr out_msg =
+    //     //     cv_bridge::CvImage(msg->header,encoding,output_frame).toImageMsg();
+    //     // //Публикуем
+    //     // publisher->publish(*out_msg);
+
+    // }
     //Преобразование цветовых пространств
     // cv::Mat process_image_color(cv::Mat &frame) {
     //     cv::Mat result;

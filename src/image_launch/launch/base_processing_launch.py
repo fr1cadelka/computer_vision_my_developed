@@ -18,7 +18,7 @@ def generate_launch_description():
             parameters=[{
                 'source': 'video',
                 'path': '/home/dmitry/Downloads/16198281792142 (1).mp4',
-                'fps': 10
+                'fps': 5
             }]
         ),
         # Узел обработчик изображения
@@ -29,7 +29,7 @@ def generate_launch_description():
             # parameters=[{
             #     'source': 'image',
             #     'path': '/home/ls/Pictures/Znaki-foto.jpg',
-            #     'fps': 5
+                # 'fps': 5
             # }]
         ),
         # Node(

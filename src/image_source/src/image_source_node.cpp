@@ -9,7 +9,7 @@ public:
         //Определение параметров
         this->declare_parameter<std::string>("source","video");
         this->declare_parameter<std::string>("path","/home/dmitry/Downloads/16198281792142 (1).mp4");
-        this->declare_parameter<int>("fps",10);
+        this->declare_parameter<int>("fps",5);
 
         //Инициализация публикатора
         publisher =
