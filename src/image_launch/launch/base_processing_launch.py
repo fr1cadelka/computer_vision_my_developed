@@ -16,22 +16,22 @@ def generate_launch_description():
             executable='image_source_node',
             name='virtual_camera_node',
             parameters=[{
-                'source': 'image',
-                'path': '/home/ls/Pictures/sl_60.jpg',
+                'source': 'video',
+                'path': '/home/dmitry/Downloads/16198281792142 (1).mp4',
                 'fps': 5
             }]
         ),
-        #Узел обработчик изображения
-        # Node(
-        #     package='image_processing',
-        #     executable='image_processing_node',
-        #     name='image_processing_node'
-        #     # parameters=[{
-        #     #     'source': 'image',
-        #     #     'path': '/home/ls/Pictures/Znaki-foto.jpg',
-        #     #     'fps': 5
-        #     # }]
-        # ),
+        # Узел обработчик изображения
+        Node(
+            package='image_processing',
+            executable='image_processing_node',
+            name='image_processing_node'
+            # parameters=[{
+            #     'source': 'image',
+            #     'path': '/home/ls/Pictures/Znaki-foto.jpg',
+            #     'fps': 5
+            # }]
+        ),
         # Node(
         #     package='image_processing',
         #     executable='image_processing_ml_knn_node',
