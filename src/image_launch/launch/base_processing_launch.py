@@ -22,16 +22,16 @@ def generate_launch_description():
             }]
         ),
         # Узел обработчик изображения
-        Node(
-            package='image_processing',
-            executable='image_processing_node',
-            name='image_processing_node'
-            # parameters=[{
-            #     'source': 'image',
-            #     'path': '/home/ls/Pictures/Znaki-foto.jpg',
-                # 'fps': 5
-            # }]
-        ),
+        # Node(
+        #     package='image_processing',
+        #     executable='image_processing_node',
+        #     name='image_processing_node'
+        #     # parameters=[{
+        #     #     'source': 'image',
+        #     #     'path': '/home/ls/Pictures/Znaki-foto.jpg',
+        #         # 'fps': 5
+        #     # }]
+        # ),
         # Node(
         #     package='image_processing',
         #     executable='image_processing_ml_knn_node',

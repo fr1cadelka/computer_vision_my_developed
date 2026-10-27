@@ -68,7 +68,7 @@ private:
         // 2. Если карточка найдена, вырезаем цифру
         if (card_found) {
             // Рисуем зеленую рамку вокруг карточки
-            cv::rectangle(result, card_rect, cv::Scalar(0, 255, 0), 3);
+            cv::rectangle(result, card_rect, cv::Scalar(255, 0, 255), 3);
 
             // Берем кусок МАСКИ карточки
             cv::Mat card_mask_roi = yellow_mask(card_rect);
@@ -102,7 +102,7 @@ private:
                 cv::Rect global_digit_rect(digit_rect.x + card_rect.x,
                                            digit_rect.y + card_rect.y,
                                            digit_rect.width, digit_rect.height);
-                cv::rectangle(result, global_digit_rect, cv::Scalar(255, 0, 0), 2);
+                cv::rectangle(result, global_digit_rect, cv::Scalar(255, 0, 255), 2);
 
                 // Вырезаем саму цифру
                 cv::Mat single_digit = binary_roi(digit_rect);

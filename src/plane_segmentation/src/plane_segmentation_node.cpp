@@ -4,162 +4,148 @@
 
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
-#include <pcl/sample_consensus/model_types.h>
-#include <pcl/sample_consensus/method_types.h>
-
+#include <pcl/point_types.h>
+#include <pcl/filters/passthrough.h>
 #include <pcl/segmentation/sac_segmentation.h>
 #include <pcl/filters/extract_indices.h>
 
-#include <random>
-
 class PlaneDetector : public rclcpp::Node {
 private:
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
-        publisher_cloud; //публикатор облака
-    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr
-        publisher_marker; //публикатор маркера плоскости
-    rclcpp::TimerBase::SharedPtr timer;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscriber;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr publisher_inliers;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr publisher_marker;
+
+    double x_min, x_max, y_min, y_max, z_min, z_max, ransac_threshold;
+
 public:
-    PlaneDetector() : Node ("cloud_loader_node") {
-        publisher_cloud =
-            this->create_publisher<sensor_msgs::msg::PointCloud2>
-            ("/cloud", 2);
+    PlaneDetector() : Node("plane_segmentation_node") {
+        // 1. Читаем параметры из launch-файла
+        x_min = this->declare_parameter("x_min", -15.0);
+        x_max = this->declare_parameter("x_max",  15.0);
+        y_min = this->declare_parameter("y_min", -10.0);
+        y_max = this->declare_parameter("y_max",  10.0);
+        z_min = this->declare_parameter("z_min", -2.0);
+        z_max = this->declare_parameter("z_max",  2.0);
+        ransac_threshold = this->declare_parameter("ransac_threshold", 0.1);
 
-        publisher_marker =
-            this->create_publisher<visualization_msgs::msg::Marker>
-            ("/detected_plane", 2);
+        RCLCPP_INFO(this->get_logger(), "Параметры обрезки: X[%.1f, %.1f] Y[%.1f, %.1f] Z[%.1f, %.1f]",
+                    x_min, x_max, y_min, y_max, z_min, z_max);
 
-        timer =
-            this->create_wall_timer(std::chrono::milliseconds(2000),
-                                    std::bind(&PlaneDetector::publish_cloud,
-                                              this));
-
+        // 2. Подписки и публикации
+        subscriber = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+            "/cloud_filtered", 10, std::bind(&PlaneDetector::cloud_callback, this, std::placeholders::_1));
+        publisher_inliers = this->create_publisher<sensor_msgs::msg::PointCloud2>("/plane_inliers", 10);
+        publisher_marker = this->create_publisher<visualization_msgs::msg::Marker>("/detected_plane", 10);
     }
 
-    void publish_cloud() {
-        //1. Создание искусственного облака точек для теста
-        //Облако
-        pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(
-            new pcl::PointCloud<pcl::PointXYZI>);
-        //Генератор случайных чисел
-        std::default_random_engine generator;
-        std::uniform_real_distribution<float> distribution(-1.0, 1.0);
-        std::normal_distribution<float> noise(0.0, 0.05);
+    void cloud_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+        pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZI>());
+        pcl::fromROSMsg(*msg, *cloud);
 
-        //Генеририруем случайные точки в рамках плоскости
-        for(int i =0; i < 500; i++) {
-            pcl::PointXYZI p;
-            p.x = distribution(generator);
-            p.y = distribution(generator);
-            p.z = 0.5 + noise(generator);
-            p.intensity = 1.0;
-            cloud->push_back(p);
-        }
-        //Генерируем точки вне плоскости
-        for(int i =0; i < 100; i++) {
-            pcl::PointXYZI p;
-            p.x = distribution(generator);
-            p.y = distribution(generator);
-            p.z = distribution(generator);
-            p.intensity = 0.5;
-            cloud->push_back(p);
+        if (cloud->empty()) return;
+
+        // ПУНКТ 2: PassThrough (Обрезка)
+        pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZI>());
+        pcl::PassThrough<pcl::PointXYZI> pass;
+
+        pass.setInputCloud(cloud);
+        pass.setFilterFieldName("x");
+        pass.setFilterLimits(x_min, x_max);
+        pass.filter(*cloud_filtered);
+
+        pass.setInputCloud(cloud_filtered);
+        pass.setFilterFieldName("y");
+        pass.setFilterLimits(y_min, y_max);
+        pass.filter(*cloud_filtered);
+
+        pass.setInputCloud(cloud_filtered);
+        pass.setFilterFieldName("z");
+        pass.setFilterLimits(z_min, z_max);
+        pass.filter(*cloud_filtered);
+
+        // ДЕБАГ: Выводим размер облака ДО и ПОСЛЕ фильтра
+        RCLCPP_INFO(this->get_logger(), "Точек до обрезки: %ld, после обрезки: %ld",
+                    cloud->size(), cloud_filtered->size());
+
+        if (cloud_filtered->empty()) {
+            RCLCPP_WARN(this->get_logger(), "После обрезки не осталось точек! Проверь параметры!");
+            return;
         }
 
-        //2. Поиск плоскости
-        //Коэффициенты модели
-        pcl::ModelCoefficients::Ptr coeff(new pcl::ModelCoefficients);
-        //Инлаеры
+        // ПУНКТ 3: RANSAC
+        pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
         pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
-        //Алгоритм сегментации
+
         pcl::SACSegmentation<pcl::PointXYZI> seg;
-
-        //Устанавлиаем параметры алгоритма
-        //Флаг оптимизации коэффициентов
         seg.setOptimizeCoefficients(true);
-        //Тип модели - плоскость
         seg.setModelType(pcl::SACMODEL_PLANE);
-
-        //Метод
         seg.setMethodType(pcl::SAC_RANSAC);
-        //Пороговое расстояние от модели
-        seg.setDistanceThreshold(0.1);
-        //Подаём облако на вход
-        seg.setInputCloud(cloud);
-        //Получаем результат
-        seg.segment(*inliers, *coeff);
+        seg.setDistanceThreshold(ransac_threshold);
+        seg.setInputCloud(cloud_filtered);
+        seg.segment(*inliers, *coefficients);
 
-        //Проверяем, удалось ли найти плоскость
-        if(inliers->indices.empty()) {
-            RCLCPP_ERROR_STREAM(this->get_logger(), "плоскость не найдена");
+        if (inliers->indices.empty()) {
+            RCLCPP_WARN(this->get_logger(), "RANSAC не смог найти плоскость.");
+            return;
         }
 
-        //3. Публикуем облако точек
-        sensor_msgs::msg::PointCloud2 cloud_msg;
-        pcl::toROSMsg(*cloud, cloud_msg);
-        cloud_msg.header.frame_id = "cloud";
+        // ПУНКТ 5: Извлечение и покраска (Зеленые точки)
+        pcl::ExtractIndices<pcl::PointXYZI> extract;
+        extract.setInputCloud(cloud_filtered);
+        extract.setIndices(inliers);
+        extract.setNegative(false);
 
-        cloud_msg.header.stamp = this->now();
-        publisher_cloud->publish(cloud_msg);
+        pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_inliers(new pcl::PointCloud<pcl::PointXYZI>());
+        extract.filter(*cloud_inliers);
 
-        //4. Визуализация распознанной плоскости с помощью маркера
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_colored(new pcl::PointCloud<pcl::PointXYZRGB>());
+        pcl::copyPointCloud(*cloud_inliers, *cloud_colored);
+        for (auto& pt : cloud_colored->points) {
+            pt.r = 0; pt.g = 255; pt.b = 0;
+        }
+
+        sensor_msgs::msg::PointCloud2 inliers_msg;
+        pcl::toROSMsg(*cloud_colored, inliers_msg);
+        inliers_msg.header.frame_id = msg->header.frame_id;
+        inliers_msg.header.stamp = this->now();
+        publisher_inliers->publish(inliers_msg);
+
+        // ПУНКТ 4: Маркер (Центр плоскости)
+        double cx = 0, cy = 0, cz = 0;
+        for (const auto& pt : cloud_inliers->points) {
+            cx += pt.x; cy += pt.y; cz += pt.z;
+        }
+        cx /= cloud_inliers->size(); cy /= cloud_inliers->size(); cz /= cloud_inliers->size();
+
         visualization_msgs::msg::Marker marker;
-        marker.header.frame_id = "cloud";
+        marker.header.frame_id = msg->header.frame_id;
         marker.header.stamp = this->now();
-        //пространство имён маркера
         marker.ns = "plane";
-        //идентификатор маркера
         marker.id = 0;
-        //тип маркера
         marker.type = visualization_msgs::msg::Marker::CUBE;
-        //метод добавления маркера
         marker.action = visualization_msgs::msg::Marker::ADD;
 
-        //Параметры расположения маркера
-        //Для упрощения (поскольку плоскость параллельна XOY)
-        //зададим только положение по Z и без изменения ориентации
-        marker.pose.position.x = 0.0;
-        marker.pose.position.y = 0.0;
-        //Алгоритм распознавания плоскости вернёт коэффициенты
-        //плоскости A, B, C, D
-        marker.pose.position.z = -coeff->values[3] /
-                                 coeff->values[2];
+        marker.pose.position.x = cx;
+        marker.pose.position.y = cy;
+        marker.pose.position.z = cz;
+        marker.pose.orientation.w = 1.0;
 
-        marker.pose.orientation.w = 1.0; //необходимо вычислить
-        //кватернион ориентации по параметрам модели распознанной плоскости
+        marker.scale.x = 5.0;
+        marker.scale.y = 5.0;
+        marker.scale.z = 0.05;
 
-        //Устанавливаем параметры модели
-        marker.scale.x = 2.0;
-        marker.scale.y = 2.0;
-        marker.scale.z = 0.01;
-
-        marker.color.a = 1.0; //прозрачность
-        marker.color.r = 0.0; //диапазон значений от 0 до 1
-        marker.color.g = 1.0;
-        marker.color.b = 0.5;
+        marker.color.a = 0.5;
+        marker.color.r = 0.0;
+        marker.color.g = 0.0;
+        marker.color.b = 1.0;
 
         publisher_marker->publish(marker);
-
     }
-
 };
 
 int main(int argc, char *argv[]) {
     rclcpp::init(argc, argv);
     rclcpp::spin(std::make_shared<PlaneDetector>());
     rclcpp::shutdown();
-
     return 0;
 }
-
-//Задание
-//1. Создать пакет, узел, который принимает отфильтрованное облако точек
-//2. На облаке выделить область точек путём установки порогов по 3
-//кооодинатам, которая соответствует заданной реальной поверхности
-//(стена или земля, будет указано в таблице по вариантам)
-//3. Полученное подоблако точек подать на вход алгоритма RANSAC по
-//сегментации данных и получить модель плоскости
-//4. Согласно полученной модели сформировать маркер и опубликовать его
-//5. Точки, на основе которых получена модель также опубликовать
-//с отличительным цветом
-//Продемонстрировать результат в rviz
-

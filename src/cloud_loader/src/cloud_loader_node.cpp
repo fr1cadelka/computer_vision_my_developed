@@ -25,7 +25,7 @@ public:
     void loadCloud() {
         //Путь к файлу
         std::string path =
-            "/home/ls/Documents/ROS_539M/Cloud_1_ds_SOR.ply";
+            "/home/dmitry/Downloads/Cloud_1_ds_SOR.ply";
         //Создаём указатель на облако точек
         pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(
             new pcl::PointCloud<pcl::PointXYZI>());
